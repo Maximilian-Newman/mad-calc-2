@@ -3,13 +3,25 @@ from matplotlib import pyplot as plt
 import math
 
 XFOIL_FAIL_TOLERANCE = 2
+KINEMATIC_VISCOSITY = 1.42e-5 # sea level at 10 degrees C
 
-def xFoil_generate_csv_naca(nacaCode, path, reynolds, d=0.1):
+def get_reynolds(chord, v):
+    return int(chord * v / (KINEMATIC_VISCOSITY))
+
+
+def xFoil_generate_csv_naca(nacaCode, reynolds, d=0.1):
     xf = xfoil.XFoil()
+    xf.naca(nacaCode)
+    return xFoil_generate_csv(xf, "NACA" + str(nacaCode), reynolds, d=d)
+
+def get_airfoil_cache_file_path(name, reynolds):
+    return "xfoilcache/" + name + "-Re=" + str(int(reynolds)) + ".csv"
+
+def xFoil_generate_csv(xf, name, reynolds, d=0.1):
+    print(" [ running xFoil on airfoil:", name, " with Re =", reynolds, end=" ] ... ")
     xf.Re = reynolds
     xf.max_iter = 500
     xf.mach = 0
-    xf.naca(nacaCode)
 
     results = []
 
@@ -34,7 +46,7 @@ def xFoil_generate_csv_naca(nacaCode, path, reynolds, d=0.1):
 
         if not failed:
             results.append([AoA, cl, cd, cm])
-            print(AoA, cl, cd, cm)
+            #print(AoA, cl, cd, cm)
         AoA -= d
 
     results = results[::-1]
@@ -60,10 +72,10 @@ def xFoil_generate_csv_naca(nacaCode, path, reynolds, d=0.1):
 
         if not failed:
             results.append([AoA, cl, cd, cm])
-            print(AoA, cl, cd, cm)
+            #print(AoA, cl, cd, cm)
         AoA += d
     
-    file = open(path, "w")
+    file = open(get_airfoil_cache_file_path(name, reynolds), "w")
     for line in results:
         AoA, cl, cd, cm = line
         AoA = str(AoA)
@@ -73,7 +85,8 @@ def xFoil_generate_csv_naca(nacaCode, path, reynolds, d=0.1):
         file.write(",".join([AoA, cl, cd, cm]) + "\n")
     file.close()
 
+    print("done")
+    return results
 
-print("start")
-xFoil_generate_csv_naca(4412, "xfoilcache/4412.csv", 200000)
-print("end")
+
+xFoil_generate_csv_naca(4412, 200000)
