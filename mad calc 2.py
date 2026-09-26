@@ -19,13 +19,14 @@ def get_airfoil_cache_file_path(name, reynolds):
 
 def xFoil_generate_csv(xf, name, reynolds, d=0.1):
     print(" [ running xFoil on airfoil:", name, " with Re =", reynolds, end=" ] ... ")
+    xf.repanel(n_nodes=300)
     xf.Re = reynolds
     xf.max_iter = 500
     xf.mach = 0
 
     results = []
 
-    
+    xf.reset_bls()  
     AoA = 0 - d
     numFails = 0
     while numFails < XFOIL_FAIL_TOLERANCE:
@@ -51,7 +52,8 @@ def xFoil_generate_csv(xf, name, reynolds, d=0.1):
 
     results = results[::-1]
 
-    
+
+    xf.reset_bls() 
     AoA = 0
     numFails = 0
     while numFails < XFOIL_FAIL_TOLERANCE:
