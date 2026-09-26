@@ -30,17 +30,20 @@ def xFoil_generate_csv_naca(nacaCode, reynolds, d=0.1):
     xf.naca(nacaCode)
     return xFoil_generate_csv(xf, "NACA" + str(nacaCode), reynolds, d=d)
 
-def xFoil_generate_csv_selig(name, reynolds, d=0.1):
+def get_selig_data(name):
     x = []
     y = []
     file = open("airfoils/" + name + ".dat", "r")
     for line in file.read().split("\n")[1:]:
         if line != "":
             line = line.split()
-            x.append(line[0])
-            y.append(line[1])
+            x.append(float(line[0]))
+            y.append(float(line[1]))
     file.close()
+    return [x, y]
     
+def xFoil_generate_csv_selig(name, reynolds, d=0.1):
+    x, y = get_selig_data(name)
     xf = xfoil.XFoil()
     xf.airfoil = xfoil.Airfoil(np.array(x), np.array(y))
     return xFoil_generate_csv(xf, name, reynolds, d=d)
@@ -120,4 +123,42 @@ def xFoil_generate_csv(xf, name, reynolds, d=0.1):
     return results
 
 
-xFoil_generate_csv_selig(airfoil_full_name("NACA4412", 0.8, 1, -30), 200000)
+xFoil_generate_csv_selig(airfoil_full_name("NACA4412", 0.8, 0.5, -20), 200000)
+
+
+model_diagram_fig = plt.figure()
+model_diagram = model_diagram_fig.add_subplot(projection = "3d")
+
+def clear_model_diagram():
+    model_diagram.cla()
+    model_diagram.set_axis_off()
+    model_diagram.set_aspect("equal")
+
+clear_model_diagram()
+
+def model_diagram_add_airfoil(name, x, y, z, chord):
+    y_data, z_data = get_selig_data(name)
+    x_data = []
+    for i in range(0, len(z_data)):
+        y_data[i] = y + chord * y_data[i]
+        z_data[i] = z + chord * z_data[i]
+        x_data.append(x)
+    
+    model_diagram.plot(x_data, y_data, z_data, c="blue")
+
+
+# testing plots:
+"""
+for i in range(0, 50):
+    model_diagram.scatter([i], [i], [i])
+    plt.show(block=False)
+    plt.pause(1)
+    if (i % 10 == 0):
+        clear_model_diagram()
+"""
+
+model_diagram_add_airfoil(airfoil_full_name("NACA4412", 0.8, 0.5, -20), 0, 0, 0, 1)
+model_diagram_add_airfoil(airfoil_full_name("NACA4412", 0.8, 1, 0), 1, 0, 0, 1)
+model_diagram_add_airfoil(airfoil_full_name("NACA4412", 0.8, 1, 0), 2, -0.5, 0, 1.5)
+model_diagram_add_airfoil(airfoil_full_name("NACA4412", 0.8, 0.5, -20), 0, 0, 1, 1)
+plt.show(block=False)
