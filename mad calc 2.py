@@ -1,21 +1,49 @@
 import xfoil
 from matplotlib import pyplot as plt
 import math
+import numpy as np
 
 XFOIL_FAIL_TOLERANCE = 2
 KINEMATIC_VISCOSITY = 1.42e-5 # sea level at 10 degrees C
+N_CRIT = 7 # lower numbers -> more turbulent conditions
+CL_MULTIPLIER = 1 / 1.5
+CD_MULTIPLIER = 1.5
+CM_MULTIPLIER = 1
 
 def get_reynolds(chord, v):
     return int(chord * v / (KINEMATIC_VISCOSITY))
 
+def airfoil_full_name(baseName, flap_x, flap_y, flap_ang):
+    """
+    flap_x = position of hinge along chord (0-1)
+    flap_y = height of hinge between bottom and top surface of wing (0-1)
+    """
+    if flap_ang == 0:
+        return baseName
+    return baseName + "_f" + str(int(100 * flap_x)) + "_" + str(int(100 * flap_y)) + "_" + str(int(flap_ang))
+
+def get_airfoil_cache_file_path(fullname, reynolds):
+    return "xfoilcache/" + fullname + "_Re=" + str(int(reynolds)) + "_nCrit=" + str(int(N_CRIT)) + ".csv"
 
 def xFoil_generate_csv_naca(nacaCode, reynolds, d=0.1):
     xf = xfoil.XFoil()
     xf.naca(nacaCode)
     return xFoil_generate_csv(xf, "NACA" + str(nacaCode), reynolds, d=d)
 
-def get_airfoil_cache_file_path(name, reynolds):
-    return "xfoilcache/" + name + "-Re=" + str(int(reynolds)) + ".csv"
+def xFoil_generate_csv_selig(name, reynolds, d=0.1):
+    x = []
+    y = []
+    file = open("airfoils/" + name + ".dat", "r")
+    for line in file.read().split("\n")[1:]:
+        if line != "":
+            line = line.split()
+            x.append(line[0])
+            y.append(line[1])
+    file.close()
+    
+    xf = xfoil.XFoil()
+    xf.airfoil = xfoil.Airfoil(np.array(x), np.array(y))
+    return xFoil_generate_csv(xf, name, reynolds, d=d)
 
 def xFoil_generate_csv(xf, name, reynolds, d=0.1):
     print(" [ running xFoil on airfoil:", name, " with Re =", reynolds, end=" ] ... ")
@@ -23,6 +51,7 @@ def xFoil_generate_csv(xf, name, reynolds, d=0.1):
     xf.Re = reynolds
     xf.max_iter = 500
     xf.mach = 0
+    xf.n_crit = N_CRIT
 
     results = []
 
@@ -91,4 +120,4 @@ def xFoil_generate_csv(xf, name, reynolds, d=0.1):
     return results
 
 
-xFoil_generate_csv_naca(4412, 200000)
+xFoil_generate_csv_selig(airfoil_full_name("NACA4412", 0.8, 1, -30), 200000)
