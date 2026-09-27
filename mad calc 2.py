@@ -10,6 +10,8 @@ CL_MULTIPLIER = 1 / 1.5
 CD_MULTIPLIER = 1.5
 CM_MULTIPLIER = 1
 
+REYNOLDS_MAX_INTERPOLATION_DISTANCE = 10000
+
 def get_reynolds(chord, v):
     return int(chord * v / (KINEMATIC_VISCOSITY))
 
@@ -64,22 +66,11 @@ def xFoil_generate_csv(xf, name, reynolds, d=0.1):
     while numFails < XFOIL_FAIL_TOLERANCE:
         cl, cd, cm, cp = xf.a(AoA)
         failed = False
-        if math.isnan(cl):
-            cl = 0
-            failed = True
-        if math.isnan(cd):
-            cd = 10
-            failed = True
-        if math.isnan(cm):
-            cm = 0
-            failed = True
-
-        if failed: numFails += 1
-        else: numFails = 0
-
-        if not failed:
+        if math.isnan(cl) or math.isnan(cd) or math.isnan(cm):
+            numFails += 1
+        else:
+            numFails = 0
             results.append([AoA, cl, cd, cm])
-            #print(AoA, cl, cd, cm)
         AoA -= d
 
     results = results[::-1]
@@ -90,23 +81,12 @@ def xFoil_generate_csv(xf, name, reynolds, d=0.1):
     numFails = 0
     while numFails < XFOIL_FAIL_TOLERANCE:
         cl, cd, cm, cp = xf.a(AoA)
-        failed = False
-        if math.isnan(cl):
-            cl = 0
-            failed = True
-        if math.isnan(cd):
-            cd = 10
-            failed = True
-        if math.isnan(cm):
-            cm = 0
-            failed = True
-
-        if failed: numFails += 1
-        else: numFails = 0
-
-        if not failed:
+        
+        if math.isnan(cl) or math.isnan(cd) or math.isnan(cm):
+            numFails += 1
+        else:
+            numFails = 0
             results.append([AoA, cl, cd, cm])
-            #print(AoA, cl, cd, cm)
         AoA += d
     
     file = open(get_airfoil_cache_file_path(name, reynolds), "w")
@@ -123,8 +103,42 @@ def xFoil_generate_csv(xf, name, reynolds, d=0.1):
     return results
 
 
-xFoil_generate_csv_selig(airfoil_full_name("NACA4412", 0.8, 0.5, -20), 200000)
+def get_available_flap_angles(name, flapx, flapy): # returns list of angles for which selig .dat coordinate file was provided
+    angles = []
+    for i in range(-90, 90):
+        try:
+            file = open("airfoils/" + airfoil_full_name(name, flapx, flapy, i) + ".dat", "r")
+            file.close()
+            angles.append(i)
+        except:
+            pass
+    return angles
 
+
+def get_xfoil_data_no_interpolation(name, flap_x, flap_y, flap_ang, reynolds):
+    name = airfoil_full_name(name, flap_x, flap_y, flap_ang)
+
+    try:
+        data = []
+        file = open(get_airfoil_cache_file_path(name, reynolds), "r")
+        for line in file.read().split("\n"):
+            if line != "":
+                line = line.split(",")
+                for i in range(0, 4):
+                    line[i] = float(line[i])
+                data.append(line)
+        file.close()
+        return data
+    
+    except:
+        return xFoil_generate_csv_selig(name, reynolds)
+
+print(get_xfoil_data_no_interpolation("NACA4412", 0.8, 0.5, -20, 200000))
+print(get_xfoil_data_no_interpolation("NACA4412", 0.8, 0.5, 0, 200000))
+print(get_available_flap_angles("NACA4412", 0.8, 0.5))
+print(get_available_flap_angles("NACA4412", 0.8, 0.4))
+print(get_available_flap_angles("NACA4412", 0.9, 0.5))
+print(get_available_flap_angles("NACA4419", 0.8, 0.5))
 
 model_diagram_fig = plt.figure()
 model_diagram = model_diagram_fig.add_subplot(projection = "3d")
