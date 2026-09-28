@@ -15,11 +15,11 @@ KINEMATIC_VISCOSITY = 1.42e-5 # sea level at 10 degrees C
 AIR_DENSITY = 1.225
 N_CRIT = 7 # lower numbers -> more turbulent conditions
 CL_MULTIPLIER = 1 / 1.5
-CD_MULTIPLIER = 1.5
+CD_MULTIPLIER = 1.3
 CM_MULTIPLIER = 1
 
 #REYNOLDS_MAX_INTERPOLATION_DISTANCE = 100000
-REYNOLDS_MAX_INTERPOLATION_RATIO = 1.5
+REYNOLDS_MAX_INTERPOLATION_RATIO = 1.2
 
 ARROW_SIZE_MULTIPLIER = 0.02
 
@@ -62,6 +62,7 @@ def xFoil_generate_csv_selig(name, reynolds, d=0.1):
     return xFoil_generate_csv(xf, name, reynolds, d=d)
 
 def xFoil_generate_csv(xf, name, reynolds, d=0.1):
+    reynolds = int(reynolds)
     print(" [ running xFoil on '", name, "' with Re =", reynolds, end=" ] ... ")
     xf.repanel(n_nodes=300)
     xf.Re = reynolds
@@ -326,10 +327,10 @@ class AeroElement:
         x, y, z = self.position
         x += self.chord / 4
         lift, drag = self.get_force_vectors()
-        u, v, w = scale_vector(lift, ARROW_SIZE_MULTIPLIER)
-        parentModel.model_diagram.quiver(x, y, z, u, v, w, color="green", arrow_length_ratio=0.05, clip_on=False)
-        u, v, w = scale_vector(drag, ARROW_SIZE_MULTIPLIER)
-        parentModel.model_diagram.quiver(x, y, z, u, v, w, color="red", arrow_length_ratio=0.05, clip_on=False)
+        lx, ly, lz = scale_vector(lift, ARROW_SIZE_MULTIPLIER)
+        dx, dy, dz = scale_vector(drag, ARROW_SIZE_MULTIPLIER)
+        parentModel.model_diagram.quiver(x, y, z, lx, ly, lz, color="green", arrow_length_ratio=0.05, clip_on=False)
+        parentModel.model_diagram.quiver(x+lx, y+ly, z+lz, dx, dy, dz, color="red", arrow_length_ratio=0.05, clip_on=False)
 
     def display(self, parentModel):
         self.display_outline(parentModel)
@@ -420,7 +421,7 @@ class AeroElement:
 
 class StaticModel:
     def __init__(self):
-        self.model_diagram_fig = plt.figure(figsize=(20,9), layout="constrained")
+        self.model_diagram_fig = plt.figure(figsize=(12,10), layout="constrained")
         self.model_diagram = self.model_diagram_fig.add_subplot(projection = "3d")
         self.aeroElements = []
         self.massElements = []
@@ -516,9 +517,9 @@ for i in range(0, 21):
 test.clear_model_diagram()
 test.display_airfoils()
 
-
-for airspeed in range(1, 20):
+airspeed = 20
+for AoA in range(1, 30):
     test.update_xfoil_data(airspeed)
-    test.update_forces(5, airspeed)
+    test.update_forces(AoA, airspeed)
     test.clear_model_diagram()
     test.display_airfoils()
