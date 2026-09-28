@@ -15,7 +15,7 @@ KINEMATIC_VISCOSITY = 1.42e-5 # sea level at 10 degrees C
 AIR_DENSITY = 1.225
 N_CRIT = 7 # lower numbers -> more turbulent conditions
 CL_MULTIPLIER = 1 / 1.5
-CD_MULTIPLIER = 1.3
+CD_MULTIPLIER = 1.5
 CM_MULTIPLIER = 1
 
 #REYNOLDS_MAX_INTERPOLATION_DISTANCE = 100000
@@ -172,22 +172,54 @@ def interpolate_xfoil(data1, data2, ratio):
     xfoilData = []
     i = 0
     j = 0
-    while i < len(data1) and j < len(data2):
-        point1 = data1[i]
-        point2 = data2[j]
-        if point1[0] == point2[0]:
-            newPoint = [data1[i][0]]
+    maxCD1 = 0
+    maxCD2 = 0
+    while i < len(data1) or j < len(data2):
+        point1 = None
+        point2 = None
+        
+        if i < len(data1) and j < len(data2):
+            point1 = data1[i]
+            point2 = data2[j]
+            
+            if point1[2] > maxCD1:
+                maxCD1 =point1[2]
+            if point2[2] > maxCD2:
+                maxCD2 =point2[2]
+                
+            if point1[0] == point2[0]:
+                newPoint = [point1[0]]
+                for k in range(1, 4):
+                    newPoint.append(point1[k] + ratio * (point2[k] - point1[k]))
+                xfoilData.append(newPoint)
+                i += 1
+                j += 1
+
+            elif point1[0] > point2[0]:
+                j += 1
+            else:
+                i += 1
+
+        elif i < len(data1):
+            point1 = data1[i]
+            point2 = [point1[0], 0, maxCD2, 0]
+            newPoint = [point1[0]]
             for k in range(1, 4):
                 newPoint.append(point1[k] + ratio * (point2[k] - point1[k]))
             xfoilData.append(newPoint)
             i += 1
+            
+        else:
+            point2 = data2[j]
+            point1 = [point2[0], 0, maxCD1, 0]
+            newPoint = [point1[0]]
+            for k in range(1, 4):
+                newPoint.append(point1[k] + ratio * (point2[k] - point1[k]))
+            xfoilData.append(newPoint)
             j += 1
 
-        elif point1[0] > point2[0]:
-            j += 1
-        else:
-            i += 1
-    
+            
+        
     return xfoilData
 
 def get_xfoil_data_no_reynolds_interpolation(name, flapx, flapy, flapang, reynolds, availableAngles=None): # allow interpolation between flap angles
@@ -511,14 +543,15 @@ dihedral = 2 / 100
 sweep = 0.05
 test.aeroElements = []
 for i in range(0, 21):
-    test.aeroElements.append(AeroElement("NACA4412", 2 * (1-0.02*i), i/2, width, 0.8, 0.5, -i, i*sweep, i*width, i*dihedral))
-    test.aeroElements.append(AeroElement("NACA4412", 2 * (1-0.02*i), i/2, width, 0.8, 0.5, -20, i*sweep, -i*width, i*dihedral))
+    test.aeroElements.append(AeroElement("NACA4412", 2 * (1-0.02*i), 0.2*(20-i), width, 0.8, 0.5, -i, i*sweep, (i+1)*width, i*dihedral))
+    test.aeroElements.append(AeroElement("NACA4412", 2 * (1-0.02*i), 0.2*(20-i), width, 0.8, 0.5, -20, i*sweep, -i*width, i*dihedral))
 
 test.clear_model_diagram()
 test.display_airfoils()
 
 airspeed = 20
-for AoA in range(1, 30):
+for AoA in range(-30, 35):
+    #AoA = AoA / 10
     test.update_xfoil_data(airspeed)
     test.update_forces(AoA, airspeed)
     test.clear_model_diagram()
