@@ -18,7 +18,7 @@ CL_MULTIPLIER = 1 / 1.5
 CD_MULTIPLIER = 1.5
 CM_MULTIPLIER = 1
 
-REYNOLDS_MAX_INTERPOLATION_DISTANCE = 10000
+REYNOLDS_MAX_INTERPOLATION_DISTANCE = 20000
 
 ARROW_SIZE_MULTIPLIER = 0.02
 
@@ -164,18 +164,9 @@ def get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, reynolds):
     except:
         return xFoil_generate_csv_selig(name, reynolds)
 
-def get_xfoil_data_no_reynolds_interpolation(name, flapx, flapy, flapang, reynolds, availableAngles=None): # allow interpolation between flap angles
-    if availableAngles == None:
-        availableAngles = get_available_flapangles(name, flapx, flapy)
-    
-    a1, a2 = choose_interpol_flap_angles(flapang, availableAngles)
-    if a1 == a2:
-        return get_xfoil_data_no_interpolation(name, flapx, flapy, a1, reynolds)
 
-    data1 = get_xfoil_data_no_interpolation(name, flapx, flapy, a1, reynolds)
-    data2 = get_xfoil_data_no_interpolation(name, flapx, flapy, a2, reynolds)
-    
-    ratio = (flapang - a1) / (a2 - a1)
+
+def interpolate_xfoil(data1, data2, ratio):
     xfoilData = []
     i = 0
     j = 0
@@ -196,6 +187,19 @@ def get_xfoil_data_no_reynolds_interpolation(name, flapx, flapy, flapang, reynol
             i += 1
     
     return xfoilData
+
+def get_xfoil_data_no_reynolds_interpolation(name, flapx, flapy, flapang, reynolds, availableAngles=None): # allow interpolation between flap angles
+    if availableAngles == None:
+        availableAngles = get_available_flapangles(name, flapx, flapy)
+    
+    a1, a2 = choose_interpol_flap_angles(flapang, availableAngles)
+    if a1 == a2:
+        return get_xfoil_data_no_interpolation(name, flapx, flapy, a1, reynolds)
+
+    data1 = get_xfoil_data_no_interpolation(name, flapx, flapy, a1, reynolds)
+    data2 = get_xfoil_data_no_interpolation(name, flapx, flapy, a2, reynolds)
+    ratio = (flapang - a1) / (a2 - a1)
+    return interpolate_xfoil(data1, data2, ratio)
     
 
 
@@ -207,7 +211,45 @@ def get_already_calculated_reynolds(name, flapx, flapy, flapang):
         if f.endswith("_nCrit=" + str(N_CRIT) + ".csv") and f.startswith("xfoilcache/" + airfoil_full_name(name, flapx, flapy, flapang) + "_Re="):
             r = f[f.find("Re=") + 3 : f.find("_nCrit=")]
             available.append(int(r))
-    return available
+    return sorted(available)
+
+
+def get_xfoil_data_no_flap_interpolation(name, flapx, flapy, flapang, reynolds):  # interpolates between reynolds numbers if within tolerance
+    available = get_already_calculated_reynolds(name, flapx, flapy, flapang)
+    #print(name, flapx, flapy, flapang, reynolds, available)
+    if reynolds < available[0] or reynolds > available[-1]:
+        return get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, reynolds)
+
+    for i in range(0, len(available)):
+        if reynolds == available[i]:
+            return get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, reynolds)
+        
+        if reynolds < available[i]:
+            r1 = available[i-1]
+            r2 = available[i]
+
+            if (r2 - r1) > REYNOLDS_MAX_INTERPOLATION_DISTANCE:
+                return get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, reynolds)
+                
+            ratio = (reynolds - r1) / (r2 - r1)
+            data1 = get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, r1)
+            data2 = get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, r2)
+            return interpolate_xfoil(data1, data2, ratio)
+
+
+def get_xfoil_data(name, flapx, flapy, flapang, reynolds, availableAngles=None):
+    if availableAngles == None:
+        availableAngles = get_available_flapangles(name, flapx, flapy)
+
+    a1, a2 = choose_interpol_flap_angles(flapang, availableAngles)
+    
+    if a1 == a2:
+        return get_xfoil_data_no_flap_interpolation(name, flapx, flapy, flapang, reynolds)
+
+    data1 = get_xfoil_data_no_flap_interpolation(name, flapx, flapy, a1, reynolds)
+    data2 = get_xfoil_data_no_flap_interpolation(name, flapx, flapy, a2, reynolds)
+    ratio = (flapang - a1) / (a2 - a1)
+    return interpolate_xfoil(data1, data2, ratio)
 
 
 def rotate_point(x, y, angle_degrees):
@@ -242,26 +284,6 @@ class AeroElement:
         self.stalled = True
         self.lastCalcModelIncidence = 0 # incidence of model when forces were last updated
 
-    """def choose_interpol_flap_angles(self):
-        if len(self.availableFlapAngles) == 0:
-            print("ERROR: No coordinate file available for '", self.name, "'")
-            return [None, None]
-
-        if self.flapang in self.availableFlapAngles:
-            return [self.flapang, self.flapang]
-
-        if self.flapang < self.availableFlapAngles[0]:
-            print("Warning: ", self.flapang, "outside of flap data range for airfoil '", self.name, "'")
-            return [self.availableFlapAngles[0], self.availableFlapAngles[0]]
-
-        if self.flapang > self.availableFlapAngles[-1]:
-            print("Warning: ", self.flapang, "outside of flap data range for airfoil '", self.name, "'")
-            return [self.availableFlapAngles[-1], self.availableFlapAngles[-1]]
-
-        for i in range(0, len(self.availableFlapAngles)):
-            if self.flapang < self.availableFlapAngles[i]:
-                return [self.availableFlapAngles[i-1], self.availableFlapAngles[i]]"""
-
     def nearest_flap_angle(self):
         if self.interpolFlapAngles == [None, None]:
             self.interpolFlapAngles = self.chooseInterpolFlapAngles()
@@ -282,9 +304,9 @@ class AeroElement:
         x += self.chord / 4
         lift, drag = self.get_force_vectors()
         u, v, w = scale_vector(lift, ARROW_SIZE_MULTIPLIER)
-        parentModel.model_diagram.quiver(x, y, z, u, v, w, arrow_length_ratio=ARROW_SIZE_MULTIPLIER, color="green", clip_on=False)
+        parentModel.model_diagram.quiver(x, y, z, u, v, w, color="green", arrow_length_ratio=0.05, clip_on=False)
         u, v, w = scale_vector(drag, ARROW_SIZE_MULTIPLIER)
-        parentModel.model_diagram.quiver(x, y, z, u, v, w, arrow_length_ratio=ARROW_SIZE_MULTIPLIER, color="red", clip_on=False)
+        parentModel.model_diagram.quiver(x, y, z, u, v, w, color="red", arrow_length_ratio=0.05, clip_on=False)
 
     def display(self, parentModel):
         self.display_outline(parentModel)
@@ -360,7 +382,15 @@ class AeroElement:
 
     def update_xfoil_data_no_reynolds_interpolation(self, airspeed):
         reynolds = get_reynolds(self.chord, airspeed)
-        self.xfoilData = get_xfoil_data_no_reynolds_interpolation(self.name, self.flapx, self.flapy, self.flapang, reynolds)
+        self.xfoilData = get_xfoil_data_no_reynolds_interpolation(self.name, self.flapx, self.flapy, self.flapang, reynolds, self.availableFlapAngles)
+
+    def update_xfoil_data_no_flap_interpolation(self, airspeed):
+        reynolds = get_reynolds(self.chord, airspeed)
+        self.xfoilData = get_xfoil_data_no_flap_interpolation(self.name, self.flapx, self.flapy, self.flapang, reynolds)
+
+    def update_xfoil_data(self, airspeed):
+        reynolds = get_reynolds(self.chord, airspeed)
+        self.xfoilData = get_xfoil_data(self.name, self.flapx, self.flapy, self.flapang, reynolds, self.availableFlapAngles)
         
         
 
@@ -426,6 +456,14 @@ class StaticModel:
         for element in self.aeroElements:
             element.update_xfoil_data_no_reynolds_interpolation(airspeed)
 
+    def update_xfoil_data_no_flap_interpolation(self, airspeed): # interpolates reynolds number only
+        for element in self.aeroElements:
+            element.update_xfoil_data_no_flap_interpolation(airspeed)
+
+    def update_xfoil_data(self, airspeed): # interpolates for flaps and reynolds number
+        for element in self.aeroElements:
+            element.update_xfoil_data(airspeed)
+
     def update_forces(self, incidence, airspeed):
         for element in self.aeroElements:
             element.update_forces(incidence, airspeed)
@@ -443,23 +481,20 @@ test = StaticModel()
 
 width = 0.2
 
-#cool animation
-for a in range(0, 1):
-    for dihedral in [20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 29, 28, 27, 26, 25, 24, 23, 22, 21]:
-        dihedral = dihedral / 1000
-        test.aeroElements = []
-        for i in range(0, 21):
-            test.aeroElements.append(AeroElement("NACA4412", 2, i/2, width, 0.8, 0.5, -i, 0, i*width, i*dihedral))
-            test.aeroElements.append(AeroElement("NACA4412", 2, i/2, width, 0.8, 0.5, -20, 0, -i*width, i*dihedral))
-        
-        test.clear_model_diagram()
-        test.display_airfoils()
-        plt.pause(0.05)
-
+dihedral = 2 / 100
+test.aeroElements = []
+for i in range(0, 21):
+    test.aeroElements.append(AeroElement("NACA4412", 2 * (1-0.01*i), i/2, width, 0.8, 0.5, -i, 0, i*width, i*dihedral))
+    test.aeroElements.append(AeroElement("NACA4412", 2 * (1-0.01*i), i/2, width, 0.8, 0.5, -20, 0, -i*width, i*dihedral))
 
 test.clear_model_diagram()
+test.display_airfoils()
+plt.pause(0.5)
+
+
 airspeed = 20
-test.update_xfoil_data_no_reynolds_interpolation(airspeed)
+test.update_xfoil_data(airspeed)
 test.update_forces(5, airspeed)
+test.clear_model_diagram()
 test.display_airfoils()
 plt.show(block=False)
