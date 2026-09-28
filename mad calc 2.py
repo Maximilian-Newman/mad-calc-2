@@ -73,7 +73,7 @@ def xFoil_generate_csv(xf, name, reynolds, d=0.1):
     xf.reset_bls()  
     AoA = 0 - d
     numFails = 0
-    while numFails < XFOIL_FAIL_TOLERANCE:
+    while numFails < XFOIL_FAIL_TOLERANCE or AoA > -5:
         cl, cd, cm, cp = xf.a(AoA)
         failed = False
         if math.isnan(cl) or math.isnan(cd) or math.isnan(cm):
@@ -89,7 +89,7 @@ def xFoil_generate_csv(xf, name, reynolds, d=0.1):
     xf.reset_bls() 
     AoA = 0
     numFails = 0
-    while numFails < XFOIL_FAIL_TOLERANCE:
+    while numFails < XFOIL_FAIL_TOLERANCE or AoA < 5:
         cl, cd, cm, cp = xf.a(AoA)
         
         if math.isnan(cl) or math.isnan(cd) or math.isnan(cm):
@@ -216,7 +216,7 @@ def get_already_calculated_reynolds(name, flapx, flapy, flapang):
 
 def get_xfoil_data_no_flap_interpolation(name, flapx, flapy, flapang, reynolds):  # interpolates between reynolds numbers if within tolerance
     available = get_already_calculated_reynolds(name, flapx, flapy, flapang)
-    print(name, flapx, flapy, flapang, reynolds)
+    #print(name, flapx, flapy, flapang, reynolds)
     
     if reynolds < available[0]:
         if available[0] - reynolds > REYNOLDS_MAX_INTERPOLATION_DISTANCE:
@@ -277,6 +277,12 @@ def get_xfoil_data(name, flapx, flapy, flapang, reynolds, availableAngles=None):
     data1 = get_xfoil_data_no_flap_interpolation(name, flapx, flapy, a1, reynolds)
     data2 = get_xfoil_data_no_flap_interpolation(name, flapx, flapy, a2, reynolds)
     ratio = (flapang - a1) / (a2 - a1)
+    if flapang == -18:
+        print(ratio)
+        print(data1)
+        print(data2)
+        print(interpolate_xfoil(data1, data2, ratio))
+    
     return interpolate_xfoil(data1, data2, ratio)
 
 
@@ -459,11 +465,13 @@ class StaticModel:
         for a in self.aeroElements:
             a.display_outline(self)
         plt.show(block=False)
+        self.model_diagram_fig.canvas.flush_events()
     
     def display_airfoils(self):
         for a in self.aeroElements:
             a.display(self)
         plt.show(block=False)
+        self.model_diagram_fig.canvas.flush_events()
 
     def get_max_dimension(self):
         maxDim = 0
@@ -517,7 +525,9 @@ for i in range(0, 21):
 
 test.clear_model_diagram()
 test.display_airfoils()
-plt.pause(1)
+
+#import time
+#time.sleep(2)
 
 
 airspeed = 20
