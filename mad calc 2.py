@@ -18,7 +18,7 @@ CL_MULTIPLIER = 1 / 1.5
 CD_MULTIPLIER = 1.5
 CM_MULTIPLIER = 1
 
-REYNOLDS_MAX_INTERPOLATION_DISTANCE = 20000
+REYNOLDS_MAX_INTERPOLATION_DISTANCE = 100000
 
 ARROW_SIZE_MULTIPLIER = 0.02
 
@@ -216,10 +216,26 @@ def get_already_calculated_reynolds(name, flapx, flapy, flapang):
 
 def get_xfoil_data_no_flap_interpolation(name, flapx, flapy, flapang, reynolds):  # interpolates between reynolds numbers if within tolerance
     available = get_already_calculated_reynolds(name, flapx, flapy, flapang)
-    #print(name, flapx, flapy, flapang, reynolds, available)
-    if reynolds < available[0] or reynolds > available[-1]:
-        return get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, reynolds)
+    print(name, flapx, flapy, flapang, reynolds)
+    
+    if reynolds < available[0]:
+        if available[0] - reynolds > REYNOLDS_MAX_INTERPOLATION_DISTANCE:
+            return get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, reynolds)
+        
+        if available[0] - REYNOLDS_MAX_INTERPOLATION_DISTANCE < 0:
+            get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, reynolds * 0.8)
+        else:
+            get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, available[0] - REYNOLDS_MAX_INTERPOLATION_DISTANCE)
+        available = get_already_calculated_reynolds(name, flapx, flapy, flapang)
+    
+    if reynolds > available[-1]:
+        if reynolds - available[-1] > REYNOLDS_MAX_INTERPOLATION_DISTANCE:
+            return get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, reynolds)
+        get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, available[-1] + REYNOLDS_MAX_INTERPOLATION_DISTANCE)
+        available = get_already_calculated_reynolds(name, flapx, flapy, flapang)
 
+
+    
     for i in range(0, len(available)):
         if reynolds == available[i]:
             return get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, reynolds)
@@ -229,6 +245,18 @@ def get_xfoil_data_no_flap_interpolation(name, flapx, flapy, flapang, reynolds):
             r2 = available[i]
 
             if (r2 - r1) > REYNOLDS_MAX_INTERPOLATION_DISTANCE:
+                
+                if r2 - reynolds < REYNOLDS_MAX_INTERPOLATION_DISTANCE:
+                    if r2 - REYNOLDS_MAX_INTERPOLATION_DISTANCE > 0:
+                        get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, r2 - REYNOLDS_MAX_INTERPOLATION_DISTANCE)
+                    else:
+                        get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, reynolds * 0.8)
+                    return get_xfoil_data_no_flap_interpolation(name, flapx, flapy, flapang, reynolds)
+
+                if reynolds - r1 < REYNOLDS_MAX_INTERPOLATION_DISTANCE:
+                    get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, r1 + REYNOLDS_MAX_INTERPOLATION_DISTANCE)
+                    return get_xfoil_data_no_flap_interpolation(name, flapx, flapy, flapang, reynolds)
+                
                 return get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, reynolds)
                 
             ratio = (reynolds - r1) / (r2 - r1)
@@ -484,12 +512,12 @@ width = 0.2
 dihedral = 2 / 100
 test.aeroElements = []
 for i in range(0, 21):
-    test.aeroElements.append(AeroElement("NACA4412", 2 * (1-0.01*i), i/2, width, 0.8, 0.5, -i, 0, i*width, i*dihedral))
-    test.aeroElements.append(AeroElement("NACA4412", 2 * (1-0.01*i), i/2, width, 0.8, 0.5, -20, 0, -i*width, i*dihedral))
+    test.aeroElements.append(AeroElement("NACA4412", 2 * (1-0.02*i), i/2, width, 0.8, 0.5, -i, 0, i*width, i*dihedral))
+    test.aeroElements.append(AeroElement("NACA4412", 2 * (1-0.02*i), i/2, width, 0.8, 0.5, -20, 0, -i*width, i*dihedral))
 
 test.clear_model_diagram()
 test.display_airfoils()
-plt.pause(0.5)
+plt.pause(1)
 
 
 airspeed = 20
