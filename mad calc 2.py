@@ -61,7 +61,7 @@ def xFoil_generate_csv_selig(name, reynolds, d=0.1):
     return xFoil_generate_csv(xf, name, reynolds, d=d)
 
 def xFoil_generate_csv(xf, name, reynolds, d=0.1):
-    print(" [ running xFoil on airfoil:", name, " with Re =", reynolds, end=" ] ... ")
+    print(" [ running xFoil on '", name, "' with Re =", reynolds, end=" ] ... ")
     xf.repanel(n_nodes=300)
     xf.Re = reynolds
     xf.max_iter = 500
@@ -125,6 +125,27 @@ def get_available_flapangles(name, flapx, flapy): # returns list of angles for w
     return angles
 
 
+def choose_interpol_flap_angles(flapang, availableAngles):
+    if len(availableAngles) == 0:
+        print("ERROR: No coordinate file available for '", self.name, "'")
+        return [None, None]
+
+    if flapang in availableAngles:
+        return [flapang, flapang]
+
+    if flapang < availableAngles[0]:
+        print("Warning: ", flapang, "outside of flap data range for airfoil")
+        return [availableAngles[0], availableAngles[0]]
+
+    if flapang > availableAngles[-1]:
+        print("Warning: ", flapang, "outside of flap data range for airfoil")
+        return [availableAngles[-1], availableAngles[-1]]
+
+    for i in range(0, len(availableAngles)):
+        if flapang < availableAngles[i]:
+            return [availableAngles[i-1], availableAngles[i]]
+
+
 def get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, reynolds):
     name = airfoil_full_name(name, flapx, flapy, flapang)
 
@@ -142,6 +163,51 @@ def get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, reynolds):
     
     except:
         return xFoil_generate_csv_selig(name, reynolds)
+
+def get_xfoil_data_no_reynolds_interpolation(name, flapx, flapy, flapang, reynolds, availableAngles=None): # allow interpolation between flap angles
+    if availableAngles == None:
+        availableAngles = get_available_flapangles(name, flapx, flapy)
+    
+    a1, a2 = choose_interpol_flap_angles(flapang, availableAngles)
+    if a1 == a2:
+        return get_xfoil_data_no_interpolation(name, flapx, flapy, a1, reynolds)
+
+    data1 = get_xfoil_data_no_interpolation(name, flapx, flapy, a1, reynolds)
+    data2 = get_xfoil_data_no_interpolation(name, flapx, flapy, a2, reynolds)
+    
+    ratio = (flapang - a1) / (a2 - a1)
+    xfoilData = []
+    i = 0
+    j = 0
+    while i < len(data1) and j < len(data2):
+        point1 = data1[i]
+        point2 = data2[j]
+        if point1[0] == point2[0]:
+            newPoint = [data1[i][0]]
+            for k in range(1, 4):
+                newPoint.append(point1[k] + ratio * (point2[k] - point1[k]))
+            xfoilData.append(newPoint)
+            i += 1
+            j += 1
+
+        elif point1[0] > point2[0]:
+            j += 1
+        else:
+            i += 1
+    
+    return xfoilData
+    
+
+
+def get_already_calculated_reynolds(name, flapx, flapy, flapang):
+    folder = Path("./xfoilcache")
+    files = [str(f) for f in folder.iterdir() if f.is_file()]
+    available = []
+    for f in files:
+        if f.endswith("_nCrit=" + str(N_CRIT) + ".csv") and f.startswith("xfoilcache/" + airfoil_full_name(name, flapx, flapy, flapang) + "_Re="):
+            r = f[f.find("Re=") + 3 : f.find("_nCrit=")]
+            available.append(int(r))
+    return available
 
 
 def rotate_point(x, y, angle_degrees):
@@ -167,7 +233,7 @@ class AeroElement:
         self.flapang = flapang
         self.position = [x, y, z]
         self.availableFlapAngles = get_available_flapangles(name, flapx, flapy)
-        self.interpolFlapAngles = self.choose_interpol_flap_angles()
+        self.interpolFlapAngles = choose_interpol_flap_angles(flapang, self.availableFlapAngles)
         self.xfoilData = None
         self.lift = 0
         self.drag = 0
@@ -176,7 +242,7 @@ class AeroElement:
         self.stalled = True
         self.lastCalcModelIncidence = 0 # incidence of model when forces were last updated
 
-    def choose_interpol_flap_angles(self):
+    """def choose_interpol_flap_angles(self):
         if len(self.availableFlapAngles) == 0:
             print("ERROR: No coordinate file available for '", self.name, "'")
             return [None, None]
@@ -194,7 +260,7 @@ class AeroElement:
 
         for i in range(0, len(self.availableFlapAngles)):
             if self.flapang < self.availableFlapAngles[i]:
-                return [self.availableFlapAngles[i-1], self.availableFlapAngles[i]]
+                return [self.availableFlapAngles[i-1], self.availableFlapAngles[i]]"""
 
     def nearest_flap_angle(self):
         if self.interpolFlapAngles == [None, None]:
@@ -288,8 +354,13 @@ class AeroElement:
         drag = [drag[0], 0, drag[1]]
         return [lift, drag]
 
-    def update_xfoil_data_no_interpolation(self, reynolds):
+    def update_xfoil_data_no_interpolation(self, airspeed):
+        reynolds = get_reynolds(self.chord, airspeed)
         self.xfoilData = get_xfoil_data_no_interpolation(self.name, self.flapx, self.flapy, self.flapang, reynolds)
+
+    def update_xfoil_data_no_reynolds_interpolation(self, airspeed):
+        reynolds = get_reynolds(self.chord, airspeed)
+        self.xfoilData = get_xfoil_data_no_reynolds_interpolation(self.name, self.flapx, self.flapy, self.flapang, reynolds)
         
         
 
@@ -347,23 +418,24 @@ class StaticModel:
             return 1
         return maxDim
 
-    def update_xfoil_data_no_interpolation(self, reynolds):
+    def update_xfoil_data_no_interpolation(self, airspeed):
         for element in self.aeroElements:
-            element.update_xfoil_data_no_interpolation(reynolds)
+            element.update_xfoil_data_no_interpolation(airspeed)
 
-    def update_forces(self, incidence, speed):
+    def update_xfoil_data_no_reynolds_interpolation(self, airspeed): # interpolates for flap angle only
         for element in self.aeroElements:
-            element.update_forces(incidence, speed)
+            element.update_xfoil_data_no_reynolds_interpolation(airspeed)
+
+    def update_forces(self, incidence, airspeed):
+        for element in self.aeroElements:
+            element.update_forces(incidence, airspeed)
 
     
 
 
 
 
-folder = Path("./xfoilcache")
-files = [str(f) for f in folder.iterdir() if f.is_file()]
-for f in files:
-    print(f)
+
 
 
 # testing plots:
@@ -377,7 +449,7 @@ for a in range(0, 1):
         dihedral = dihedral / 1000
         test.aeroElements = []
         for i in range(0, 21):
-            test.aeroElements.append(AeroElement("NACA4412", 2, i/2, width, 0.8, 0.5, -20, 0, i*width, i*dihedral))
+            test.aeroElements.append(AeroElement("NACA4412", 2, i/2, width, 0.8, 0.5, -i, 0, i*width, i*dihedral))
             test.aeroElements.append(AeroElement("NACA4412", 2, i/2, width, 0.8, 0.5, -20, 0, -i*width, i*dihedral))
         
         test.clear_model_diagram()
@@ -386,7 +458,8 @@ for a in range(0, 1):
 
 
 test.clear_model_diagram()
-test.update_xfoil_data_no_interpolation(200000)
-test.update_forces(5, 20)
+airspeed = 20
+test.update_xfoil_data_no_reynolds_interpolation(airspeed)
+test.update_forces(5, airspeed)
 test.display_airfoils()
 plt.show(block=False)
