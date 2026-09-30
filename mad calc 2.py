@@ -13,18 +13,22 @@ from pathlib import Path
 XFOIL_FAIL_TOLERANCE = 2
 KINEMATIC_VISCOSITY = 1.42e-5 # sea level at 10 degrees C
 AIR_DENSITY = 1.225
+AIR_TEMPERATURE = 273.15 + 10
 N_CRIT = 7 # lower numbers -> more turbulent conditions
 CL_MULTIPLIER = 1 / 1.5
 CD_MULTIPLIER = 1.5
 CM_MULTIPLIER = 1
 
-#REYNOLDS_MAX_INTERPOLATION_DISTANCE = 100000
 REYNOLDS_MAX_INTERPOLATION_RATIO = 1.2
+MACH_INTERPOLATION_DISTANCE = 0.1
 
 ARROW_SIZE_MULTIPLIER = 0.02
 
 def get_reynolds(chord, v):
     return int(chord * v / (KINEMATIC_VISCOSITY))
+
+def get_mach(airspeed):
+    return airspeed / math.sqrt(1.4 * 287 * AIR_TEMPERATURE)
 
 def airfoil_full_name(baseName, flapx, flapy, flapang):
     """
@@ -35,13 +39,15 @@ def airfoil_full_name(baseName, flapx, flapy, flapang):
         return baseName
     return baseName + "_f" + str(int(100 * flapx)) + "_" + str(int(100 * flapy)) + "_" + str(int(flapang))
 
-def get_airfoil_cache_file_path(fullname, reynolds):
-    return "xfoilcache/" + fullname + "_Re=" + str(int(reynolds)) + "_nCrit=" + str(int(N_CRIT)) + ".csv"
+def get_airfoil_cache_file_path(fullname, reynolds, mach):
+    if mach == 0:
+        return "xfoilcache/" + fullname + "_Re=" + str(int(reynolds)) + "_nCrit=" + str(int(N_CRIT)) + ".csv"
+    return "xfoilcache/" + fullname + "_Re=" + str(int(reynolds)) + "_nCrit=" + str(int(N_CRIT)) + "_M="+ str(int(100 * mach)) + ".csv"
 
-def xFoil_generate_csv_naca(nacaCode, reynolds, d=0.1):
+def xFoil_generate_csv_naca(nacaCode, reynolds, mach, d=0.1):
     xf = xfoil.XFoil()
     xf.naca(nacaCode)
-    return xFoil_generate_csv(xf, "NACA" + str(nacaCode), reynolds, d=d)
+    return xFoil_generate_csv(xf, "NACA" + str(nacaCode), reynolds, mach, d=d)
 
 def get_selig_data(name):
     x = []
@@ -55,19 +61,19 @@ def get_selig_data(name):
     file.close()
     return [x, y]
     
-def xFoil_generate_csv_selig(name, reynolds, d=0.1):
+def xFoil_generate_csv_selig(name, reynolds, mach, d=0.1):
     x, y = get_selig_data(name)
     xf = xfoil.XFoil()
     xf.airfoil = xfoil.Airfoil(np.array(x), np.array(y))
-    return xFoil_generate_csv(xf, name, reynolds, d=d)
+    return xFoil_generate_csv(xf, name, reynolds, mach, d=d)
 
-def xFoil_generate_csv(xf, name, reynolds, d=0.1):
+def xFoil_generate_csv(xf, name, reynolds, mach, d=0.1):
     reynolds = int(reynolds)
-    print(" [ running xFoil on '", name, "' with Re =", reynolds, end=" ] ... ")
+    print(" [ running xFoil on '", name, "' with Re =", reynolds, "at mach", round(mach, 3), end=" ] ... ")
     xf.repanel(n_nodes=300)
     xf.Re = reynolds
     xf.max_iter = 500
-    xf.mach = 0
+    xf.mach = mach
     xf.n_crit = N_CRIT
 
     results = []
@@ -148,12 +154,12 @@ def choose_interpol_flap_angles(flapang, availableAngles):
             return [availableAngles[i-1], availableAngles[i]]
 
 
-def get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, reynolds):
+def get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, reynolds, mach):
     name = airfoil_full_name(name, flapx, flapy, flapang)
 
     try:
         data = []
-        file = open(get_airfoil_cache_file_path(name, reynolds), "r")
+        file = open(get_airfoil_cache_file_path(name, reynolds, mach), "r")
         for line in file.read().split("\n"):
             if line != "":
                 line = line.split(",")
@@ -164,7 +170,7 @@ def get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, reynolds):
         return data
     
     except:
-        return xFoil_generate_csv_selig(name, reynolds)
+        return xFoil_generate_csv_selig(name, reynolds, mach)
 
 
 
@@ -222,23 +228,26 @@ def interpolate_xfoil(data1, data2, ratio):
         
     return xfoilData
 
-def get_xfoil_data_no_reynolds_interpolation(name, flapx, flapy, flapang, reynolds, availableAngles=None): # allow interpolation between flap angles
+def get_xfoil_data_no_reynolds_interpolation(name, flapx, flapy, flapang, reynolds, mach, availableAngles=None): # allow interpolation between flap angles
     if availableAngles == None:
         availableAngles = get_available_flapangles(name, flapx, flapy)
     
     a1, a2 = choose_interpol_flap_angles(flapang, availableAngles)
     if a1 == a2:
-        return get_xfoil_data_no_interpolation(name, flapx, flapy, a1, reynolds)
+        return get_xfoil_data_no_interpolation(name, flapx, flapy, a1, reynolds, mach)
 
-    data1 = get_xfoil_data_no_interpolation(name, flapx, flapy, a1, reynolds)
-    data2 = get_xfoil_data_no_interpolation(name, flapx, flapy, a2, reynolds)
+    data1 = get_xfoil_data_no_interpolation(name, flapx, flapy, a1, reynolds, mach)
+    data2 = get_xfoil_data_no_interpolation(name, flapx, flapy, a2, reynolds, mach)
     ratio = (flapang - a1) / (a2 - a1)
     return interpolate_xfoil(data1, data2, ratio)
     
 
 
-def get_already_calculated_reynolds(name, flapx, flapy, flapang):
+def get_already_calculated_reynolds(name, flapx, flapy, flapang, mach):
     folder = Path("./xfoilcache")
+    end = "_M=" + str(int(100 * mach)) + ".csv"
+    if mach == 0:
+        end = ".csv"
     files = [str(f) for f in folder.iterdir() if f.is_file()]
     available = []
     for f in files:
@@ -248,26 +257,26 @@ def get_already_calculated_reynolds(name, flapx, flapy, flapang):
     return sorted(available)
 
 
-def get_xfoil_data_no_flap_interpolation(name, flapx, flapy, flapang, reynolds):  # interpolates between reynolds numbers if within tolerance
-    available = get_already_calculated_reynolds(name, flapx, flapy, flapang)
+def get_xfoil_data_no_flap_interpolation(name, flapx, flapy, flapang, reynolds, mach):  # interpolates between reynolds numbers if within tolerance
+    available = get_already_calculated_reynolds(name, flapx, flapy, flapang, mach)
     
     if reynolds < available[0]:
         if available[0] / reynolds > REYNOLDS_MAX_INTERPOLATION_RATIO:
-            return get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, reynolds)
-        get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, available[0] / REYNOLDS_MAX_INTERPOLATION_RATIO)
-        available = get_already_calculated_reynolds(name, flapx, flapy, flapang)
+            return get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, reynolds, mach)
+        get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, available[0] / REYNOLDS_MAX_INTERPOLATION_RATIO, mach)
+        available = get_already_calculated_reynolds(name, flapx, flapy, flapang, mach)
     
     if reynolds > available[-1]:
         if reynolds / available[-1] > REYNOLDS_MAX_INTERPOLATION_RATIO:
-            return get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, reynolds)
-        get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, available[-1] * REYNOLDS_MAX_INTERPOLATION_RATIO)
-        available = get_already_calculated_reynolds(name, flapx, flapy, flapang)
+            return get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, reynolds, mach)
+        get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, available[-1] * REYNOLDS_MAX_INTERPOLATION_RATIO, mach)
+        available = get_already_calculated_reynolds(name, flapx, flapy, flapang, mach)
 
 
     
     for i in range(0, len(available)):
         if reynolds == available[i]:
-            return get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, reynolds)
+            return get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, reynolds, mach)
         
         if reynolds < available[i]:
             r1 = available[i-1]
@@ -276,36 +285,51 @@ def get_xfoil_data_no_flap_interpolation(name, flapx, flapy, flapang, reynolds):
             if (r2 / r1) > REYNOLDS_MAX_INTERPOLATION_RATIO * 1.01:
                 
                 if r2 / reynolds < REYNOLDS_MAX_INTERPOLATION_RATIO:
-                    get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, r2 / REYNOLDS_MAX_INTERPOLATION_RATIO)
+                    get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, r2 / REYNOLDS_MAX_INTERPOLATION_RATIO, mach)
                     #print(reynolds, r1, r2, r2/reynolds, r2 / REYNOLDS_MAX_INTERPOLATION_RATIO, r2 / r1)
-                    return get_xfoil_data_no_flap_interpolation(name, flapx, flapy, flapang, reynolds)
+                    return get_xfoil_data_no_flap_interpolation(name, flapx, flapy, flapang, reynolds, mach)
 
                 if reynolds / r1 < REYNOLDS_MAX_INTERPOLATION_RATIO:
-                    get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, r1 * REYNOLDS_MAX_INTERPOLATION_RATIO)
-                    return get_xfoil_data_no_flap_interpolation(name, flapx, flapy, flapang, reynolds)
+                    get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, r1 * REYNOLDS_MAX_INTERPOLATION_RATIO, mach)
+                    return get_xfoil_data_no_flap_interpolation(name, flapx, flapy, flapang, reynolds, mach)
                 
-                return get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, reynolds)
+                return get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, reynolds, mach)
                 
             ratio = (reynolds - r1) / (r2 - r1)
-            data1 = get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, r1)
-            data2 = get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, r2)
+            data1 = get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, r1, mach)
+            data2 = get_xfoil_data_no_interpolation(name, flapx, flapy, flapang, r2, mach)
             return interpolate_xfoil(data1, data2, ratio)
 
 
-def get_xfoil_data(name, flapx, flapy, flapang, reynolds, availableAngles=None):
+def get_xfoil_data_no_mach_interpolation(name, flapx, flapy, flapang, reynolds, mach, availableAngles=None):
     if availableAngles == None:
         availableAngles = get_available_flapangles(name, flapx, flapy)
 
     a1, a2 = choose_interpol_flap_angles(flapang, availableAngles)
     
     if a1 == a2:
-        return get_xfoil_data_no_flap_interpolation(name, flapx, flapy, flapang, reynolds)
+        return get_xfoil_data_no_flap_interpolation(name, flapx, flapy, flapang, reynolds, mach)
 
-    data1 = get_xfoil_data_no_flap_interpolation(name, flapx, flapy, a1, reynolds)
-    data2 = get_xfoil_data_no_flap_interpolation(name, flapx, flapy, a2, reynolds)
+    data1 = get_xfoil_data_no_flap_interpolation(name, flapx, flapy, a1, reynolds, mach)
+    data2 = get_xfoil_data_no_flap_interpolation(name, flapx, flapy, a2, reynolds, mach)
     ratio = (flapang - a1) / (a2 - a1)
     
     return interpolate_xfoil(data1, data2, ratio)
+
+
+def get_xfoil_data(name, flapx, flapy, flapang, reynolds, mach, availableAngles=None):
+    mach1 = mach - mach % MACH_INTERPOLATION_DISTANCE
+    mach2 = mach1 + MACH_INTERPOLATION_DISTANCE
+
+    if mach == mach1:
+        return get_xfoil_data_no_mach_interpolation(name, flapx, flapy, flapang, reynolds, mach, availableAngles)
+
+    data1 = get_xfoil_data_no_mach_interpolation(name, flapx, flapy, flapang, reynolds, mach1, availableAngles)
+    data2 = get_xfoil_data_no_mach_interpolation(name, flapx, flapy, flapang, reynolds, mach2, availableAngles)
+    ratio = (mach - mach1) / (mach2 - mach1)
+
+    return interpolate_xfoil(data1, data2, ratio)
+
 
 
 def rotate_point(x, y, angle_degrees):
@@ -432,21 +456,10 @@ class AeroElement:
         drag = [drag[0], 0, drag[1]]
         return [lift, drag]
 
-    def update_xfoil_data_no_interpolation(self, airspeed):
-        reynolds = get_reynolds(self.chord, airspeed)
-        self.xfoilData = get_xfoil_data_no_interpolation(self.name, self.flapx, self.flapy, self.flapang, reynolds)
-
-    def update_xfoil_data_no_reynolds_interpolation(self, airspeed):
-        reynolds = get_reynolds(self.chord, airspeed)
-        self.xfoilData = get_xfoil_data_no_reynolds_interpolation(self.name, self.flapx, self.flapy, self.flapang, reynolds, self.availableFlapAngles)
-
-    def update_xfoil_data_no_flap_interpolation(self, airspeed):
-        reynolds = get_reynolds(self.chord, airspeed)
-        self.xfoilData = get_xfoil_data_no_flap_interpolation(self.name, self.flapx, self.flapy, self.flapang, reynolds)
-
     def update_xfoil_data(self, airspeed):
+        mach = get_mach(airspeed)
         reynolds = get_reynolds(self.chord, airspeed)
-        self.xfoilData = get_xfoil_data(self.name, self.flapx, self.flapy, self.flapang, reynolds, self.availableFlapAngles)
+        self.xfoilData = get_xfoil_data(self.name, self.flapx, self.flapy, self.flapang, reynolds, mach, self.availableFlapAngles)
         
         
 
@@ -506,19 +519,7 @@ class StaticModel:
             return 1
         return maxDim
 
-    def update_xfoil_data_no_interpolation(self, airspeed):
-        for element in self.aeroElements:
-            element.update_xfoil_data_no_interpolation(airspeed)
-
-    def update_xfoil_data_no_reynolds_interpolation(self, airspeed): # interpolates for flap angle only
-        for element in self.aeroElements:
-            element.update_xfoil_data_no_reynolds_interpolation(airspeed)
-
-    def update_xfoil_data_no_flap_interpolation(self, airspeed): # interpolates reynolds number only
-        for element in self.aeroElements:
-            element.update_xfoil_data_no_flap_interpolation(airspeed)
-
-    def update_xfoil_data(self, airspeed): # interpolates for flaps and reynolds number
+    def update_xfoil_data(self, airspeed):
         for element in self.aeroElements:
             element.update_xfoil_data(airspeed)
 
@@ -539,12 +540,11 @@ test = StaticModel()
 
 width = 0.2
 
-dihedral = 2 / 100
 sweep = 0.05
 test.aeroElements = []
 for i in range(0, 21):
-    test.aeroElements.append(AeroElement("NACA4412", 2 * (1-0.02*i), 0.2*(20-i), width, 0.8, 0.5, -i, i*sweep, (i+1)*width, i*dihedral))
-    test.aeroElements.append(AeroElement("NACA4412", 2 * (1-0.02*i), 0.2*(20-i), width, 0.8, 0.5, -20, i*sweep, -i*width, i*dihedral))
+    test.aeroElements.append(AeroElement("NACA4412", 2 * (1-0.02*i), 0.2*(20-i), width, 0.8, 0.5, 0, i*sweep, (i+0.5)*width, 0))
+    test.aeroElements.append(AeroElement("NACA4412", 2 * (1-0.02*i), 0.2*(20-i), width, 0.8, 0.5, 0, i*sweep, -(i+0.5)*width, 0))
 
 test.clear_model_diagram()
 test.display_airfoils()
