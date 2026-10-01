@@ -10,19 +10,20 @@ from pathlib import Path
 # positive z: up
 
 
-XFOIL_FAIL_TOLERANCE = 2
 KINEMATIC_VISCOSITY = 1.42e-5 # sea level at 10 degrees C
 AIR_DENSITY = 1.225
 AIR_TEMPERATURE = 273.15 + 10
 N_CRIT = 7 # lower numbers -> more turbulent conditions
+
 CL_MULTIPLIER = 1 / 1.5
 CD_MULTIPLIER = 1.5
-CM_MULTIPLIER = 1
+CM_MULTIPLIER = 1 / 1.5
 
+XFOIL_FAIL_TOLERANCE = 2
 REYNOLDS_MAX_INTERPOLATION_RATIO = 1.2
 MACH_INTERPOLATION_DISTANCE = 0.1
 
-ARROW_SIZE_MULTIPLIER = 0.02
+ARROW_SIZE_MULTIPLIER = 0.1
 
 def get_reynolds(chord, v):
     return int(chord * v / (KINEMATIC_VISCOSITY))
@@ -107,7 +108,7 @@ def xFoil_generate_csv(xf, name, reynolds, mach, d=0.1):
             results.append([AoA, cl, cd, cm])
         AoA += d
     
-    file = open(get_airfoil_cache_file_path(name, reynolds), "w")
+    file = open(get_airfoil_cache_file_path(name, reynolds, mach), "w")
     for line in results:
         AoA, cl, cd, cm = line
         AoA = str(AoA)
@@ -251,7 +252,7 @@ def get_already_calculated_reynolds(name, flapx, flapy, flapang, mach):
     files = [str(f) for f in folder.iterdir() if f.is_file()]
     available = []
     for f in files:
-        if f.endswith("_nCrit=" + str(N_CRIT) + ".csv") and f.startswith("xfoilcache/" + airfoil_full_name(name, flapx, flapy, flapang) + "_Re="):
+        if f.endswith("_nCrit=" + str(N_CRIT) + end) and f.startswith("xfoilcache/" + airfoil_full_name(name, flapx, flapy, flapang) + "_Re="):
             r = f[f.find("Re=") + 3 : f.find("_nCrit=")]
             available.append(int(r))
     return sorted(available)
@@ -343,6 +344,12 @@ def rotate_point(x, y, angle_degrees):
 
 def scale_vector(vec, scale):
     return [i * scale for i in vec]
+
+def add_vectors(vec1, vec2):
+    res = []
+    for i in range(0, len(vec1)):
+        res.append(vec1[i] + vec2[i])
+    return res
 
 class AeroElement:
     def __init__(self, name, chord, incidence, width, flapx, flapy, flapang, x, y, z):
@@ -452,16 +459,38 @@ class AeroElement:
         lift = rotate_point(0, self.lift, self.lastCalcModelIncidence)
         drag = rotate_point(self.drag, 0, self.lastCalcModelIncidence)
 
+        lift = scale_vector(lift, CL_MULTIPLIER)
+        drag = scale_vector(drag, CD_MULTIPLIER)
+        
         lift = [lift[0], 0, lift[1]]
         drag = [drag[0], 0, drag[1]]
         return [lift, drag]
+
+    def resultant_force(self):
+        lift, drag = self.get_force_vectors()
+        return add_vectors(lift, drag)
 
     def update_xfoil_data(self, airspeed):
         mach = get_mach(airspeed)
         reynolds = get_reynolds(self.chord, airspeed)
         self.xfoilData = get_xfoil_data(self.name, self.flapx, self.flapy, self.flapang, reynolds, mach, self.availableFlapAngles)
         
-        
+
+class MassElement:
+    def __init__(self, mass, x, y, z):
+        self.mass = mass
+        self.position = [x, y, z]
+        weight = [0, -9.81 * mass]
+
+    def update_weight(self, pitch):
+        self.weight = rotate_point(0, -9.81 * self.mass, pitch)
+    
+    def display(self, parentModel):
+        weight = [self.weight[0], 0, self.weight[1]]
+        x, y, z = self.position
+        parentModel.model_diagram.scatter(x, y, z, marker='o', s=20, color="black")
+        wx, wy, wz = scale_vector(weight, ARROW_SIZE_MULTIPLIER)
+        parentModel.model_diagram.quiver(x, y, z, wx, wy, wz, color="black", arrow_length_ratio=0.05, clip_on=False)
 
 
 class StaticModel:
@@ -471,12 +500,13 @@ class StaticModel:
         self.aeroElements = []
         self.massElements = []
         self.clear_model_diagram()
+        self.pitch = 0
+        self.roll = 0
         
 
     def clear_model_diagram(self):
         self.model_diagram.cla()
         self.model_diagram.set_axis_off()
-        #self.model_diagram.set_aspect("equal")
         r = self.get_max_dimension() * 0.8
         self.model_diagram.set_xlim3d(-r, r)
         self.model_diagram.set_ylim3d(-r, r)
@@ -495,18 +525,25 @@ class StaticModel:
             y_data.append(y)
 
         self.model_diagram.plot(x_data, y_data, z_data, c=color, clip_on=False)
-
-    def display_airfoil_outlines(self):
-        for a in self.aeroElements:
-            a.display_outline(self)
-        plt.show(block=False)
-        self.model_diagram_fig.canvas.flush_events()
     
-    def display_airfoils(self):
+    def display_airfoils(self, immediate=True):
         for a in self.aeroElements:
             a.display(self)
-        plt.show(block=False)
-        self.model_diagram_fig.canvas.flush_events()
+        if immediate:
+            plt.show(block=False)
+            self.model_diagram_fig.canvas.flush_events()
+
+    def display_weights(self, immediate=True):
+        for element in self.massElements:
+            element.display(self)
+        if immediate:
+            plt.show(block=False)
+            self.model_diagram_fig.canvas.flush_events()
+
+    def redraw_model_diagram(self):
+        self.clear_model_diagram()
+        self.display_airfoils(False)
+        self.display_weights()
 
     def get_max_dimension(self):
         maxDim = 0
@@ -523,9 +560,11 @@ class StaticModel:
         for element in self.aeroElements:
             element.update_xfoil_data(airspeed)
 
-    def update_forces(self, incidence, airspeed):
+    def update_forces(self, incidence, airspeed, pitch):
         for element in self.aeroElements:
             element.update_forces(incidence, airspeed)
+        for element in self.massElements:
+            element.update_weight(pitch)
 
     
 
@@ -538,13 +577,15 @@ class StaticModel:
 # testing plots:
 test = StaticModel()
 
-width = 0.2
+width = 0.1
 
-sweep = 0.05
-test.aeroElements = []
-for i in range(0, 21):
-    test.aeroElements.append(AeroElement("NACA4412", 2 * (1-0.02*i), 0.2*(20-i), width, 0.8, 0.5, 0, i*sweep, (i+0.5)*width, 0))
-    test.aeroElements.append(AeroElement("NACA4412", 2 * (1-0.02*i), 0.2*(20-i), width, 0.8, 0.5, 0, i*sweep, -(i+0.5)*width, 0))
+test.massElements.append(MassElement(1, 0.2, width*10, 0))
+test.massElements.append(MassElement(1, 0.2, -width*10, 0))
+
+for i in range(0, 15):
+    #(name, chord, incidence, width, flapx, flapy, flapang, x, y, z)
+    test.aeroElements.append(AeroElement("NACA4412", 0.4, 0.3*(20-i), width, 0.8, 0.5, 0, 0, (i+0.5)*width, 0))
+    test.aeroElements.append(AeroElement("NACA4412", 0.4, 0.3*(20-i), width, 0.8, 0.5, 0, 0, -(i+0.5)*width, 0))
 
 test.clear_model_diagram()
 test.display_airfoils()
@@ -553,6 +594,5 @@ airspeed = 20
 for AoA in range(-30, 35):
     #AoA = AoA / 10
     test.update_xfoil_data(airspeed)
-    test.update_forces(AoA, airspeed)
-    test.clear_model_diagram()
-    test.display_airfoils()
+    test.update_forces(AoA, airspeed, AoA) # temporary pitch = AoA
+    test.redraw_model_diagram()
