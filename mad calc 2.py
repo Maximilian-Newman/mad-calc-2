@@ -601,11 +601,11 @@ class StaticModel:
         for element in self.aeroElements:
             element.update_xfoil_data(airspeed)
 
-    def update_forces(self, incidence, airspeed, pitch):
+    def update_forces(self, incidence, airspeed, pathAngle):
         for element in self.aeroElements:
             element.update_forces(incidence, airspeed)
         for element in self.massElements:
-            element.update_weight(pitch)
+            element.update_weight(pathAngle + incidence)
 
     def update_cg(self):
         cg = [0, 0, 0]
@@ -630,9 +630,9 @@ class StaticModel:
         for element in self.massElements:
             self.force = add_vectors(self.force, element.weight)
 
-    def update_everything(self, AoA, airspeed, pitch):
+    def update_everything(self, AoA, airspeed, pathAngle):
         self.update_xfoil_data(airspeed)
-        self.update_forces(AoA, airspeed, pitch)
+        self.update_forces(AoA, airspeed, pathAngle)
         self.update_moment()
         self.update_resultant_force()
 
@@ -642,28 +642,28 @@ class StaticModel:
                 return True
         return False
 
-    def solve_AoA(self, airspeed, pitch, acc, tolerance=0.01):
+    def solve_AoA(self, airspeed, pathAngle, acc, tolerance=0.01):
         # will fail if stalled when aircraft incidence is 0
         # but it would be a really funky design if it was stalled then but not at other angles
         # so I don't care
         
-        self.update_everything(0, airspeed, pitch)
+        self.update_everything(0, airspeed, pathAngle)
         a1 = 0
         a2 = 0
         
         while self.force[2] > self.mass * acc:
             a1 -= 1
-            self.update_forces(a1, airspeed, pitch)
+            self.update_forces(a1, airspeed, pathAngle)
             self.update_resultant_force()
             if self.is_stalled():
                 return None
             
-        self.update_forces(0, airspeed, pitch)
+        self.update_forces(0, airspeed, pathAngle)
         self.update_resultant_force()
         
         while self.force[2] < self.mass * acc:
             a2 += 1
-            self.update_forces(a2, airspeed, pitch)
+            self.update_forces(a2, airspeed, pathAngle)
             self.update_resultant_force()
             if self.is_stalled():
                 return None
@@ -671,7 +671,7 @@ class StaticModel:
         while a2 - a1 > tolerance:
             test.redraw_model_diagram()
             c = (a1 + a2) / 2
-            self.update_forces(c, airspeed, pitch)
+            self.update_forces(c, airspeed, pathAngle)
             self.update_resultant_force()
 
             if self.force == self.mass * acc:
@@ -712,7 +712,7 @@ test.display_airfoils()
 
 airspeed = 10
 #for AoA in range(-5, 5):
-#    test.update_everything(AoA, airspeed, AoA) # temporary pitch = AoA
+#    test.update_everything(AoA, airspeed, 0)
 #    test.redraw_model_diagram()
 
 
