@@ -9,6 +9,11 @@ from pathlib import Path
 # positive y: starboard
 # positive z: up
 
+# moments are [pitch, roll, yaw]
+# positive pitch: up
+# positive roll: right
+# positive yaw: right
+
 
 KINEMATIC_VISCOSITY = 1.42e-5 # sea level at 10 degrees C
 AIR_DENSITY = 1.225
@@ -23,7 +28,7 @@ XFOIL_FAIL_TOLERANCE = 2
 REYNOLDS_MAX_INTERPOLATION_RATIO = 1.2
 MACH_INTERPOLATION_DISTANCE = 0.1
 
-ARROW_SIZE_MULTIPLIER = 0.1
+ARROW_SIZE_MULTIPLIER = 0.02
 
 def get_reynolds(chord, v):
     return int(chord * v / (KINEMATIC_VISCOSITY))
@@ -332,6 +337,15 @@ def get_xfoil_data(name, flapx, flapy, flapang, reynolds, mach, availableAngles=
     return interpolate_xfoil(data1, data2, ratio)
 
 
+def moment_from_force(f, cg, origin):
+    arm = add_vectors(origin, scale_vector(cg, -1))
+    moment = [0, 0, 0]
+
+    moment[0] = -f[2] * arm[0] + f[0] * arm[2]
+    moment[1] = -f[2] * arm[1] + f[1] * arm[2]
+    moment[2] =  f[0] * arm[1] - f[1] * arm[0]
+
+    return moment
 
 def rotate_point(x, y, angle_degrees):
     theta = math.radians(angle_degrees)
@@ -470,6 +484,13 @@ class AeroElement:
         lift, drag = self.get_force_vectors()
         return add_vectors(lift, drag)
 
+    def resultant_moment(self, cg):
+        m = [self.moment, 0, 0]
+        origin = self.position.copy()
+        origin[0] += self.chord / 4
+        m = add_vectors(m, moment_from_force(self.resultant_force(), cg, origin))
+        return m
+
     def update_xfoil_data(self, airspeed):
         mach = get_mach(airspeed)
         reynolds = get_reynolds(self.chord, airspeed)
@@ -484,13 +505,17 @@ class MassElement:
 
     def update_weight(self, pitch):
         self.weight = rotate_point(0, -9.81 * self.mass, pitch)
+        self.weight = [self.weight[0], 0, self.weight[1]]
     
     def display(self, parentModel):
-        weight = [self.weight[0], 0, self.weight[1]]
+        weight = self.weight
         x, y, z = self.position
         parentModel.model_diagram.scatter(x, y, z, marker='o', s=20, color="black")
         wx, wy, wz = scale_vector(weight, ARROW_SIZE_MULTIPLIER)
         parentModel.model_diagram.quiver(x, y, z, wx, wy, wz, color="black", arrow_length_ratio=0.05, clip_on=False)
+
+    def resultant_moment(self, cg):
+        return moment_from_force(self.weight, cg, self.position)
 
 
 class StaticModel:
@@ -502,6 +527,8 @@ class StaticModel:
         self.clear_model_diagram()
         self.pitch = 0
         self.roll = 0
+        self.cg = [0, 0, 0]
+        self.force = [0, 0, 0]
         
 
     def clear_model_diagram(self):
@@ -540,10 +567,23 @@ class StaticModel:
             plt.show(block=False)
             self.model_diagram_fig.canvas.flush_events()
 
+    def display_resultants(self, immediate=True):
+        x, y, z = self.cg
+        u, v, w = self.force
+        self.model_diagram.scatter(x, y, z, marker='o', s=100, color="purple")
+        self.model_diagram.quiver(x, y, z, u * ARROW_SIZE_MULTIPLIER, 0, 0, color="red", arrow_length_ratio=0.05, clip_on=False)
+        self.model_diagram.quiver(x, y, z, 0, v * ARROW_SIZE_MULTIPLIER, 0, color="red", arrow_length_ratio=0.05, clip_on=False)
+        self.model_diagram.quiver(x, y, z, 0, 0, w * ARROW_SIZE_MULTIPLIER, color="purple", arrow_length_ratio=0.05, clip_on=False)
+        
+        if immediate:
+            plt.show(block=False)
+            self.model_diagram_fig.canvas.flush_events()
+
     def redraw_model_diagram(self):
         self.clear_model_diagram()
         self.display_airfoils(False)
-        self.display_weights()
+        self.display_weights(False)
+        self.display_resultants()
 
     def get_max_dimension(self):
         maxDim = 0
@@ -565,6 +605,29 @@ class StaticModel:
             element.update_forces(incidence, airspeed)
         for element in self.massElements:
             element.update_weight(pitch)
+
+    def update_cg(self):
+        cg = [0, 0, 0]
+        n = 0
+        for element in self.massElements:
+            cg = add_vectors(cg, scale_vector(element.position, element.mass))
+            n += 1
+        self.cg = scale_vector(cg, 1/n)
+
+    def update_moment(self):
+        self.update_cg()
+        self.moment = [0, 0, 0]
+        for element in self.aeroElements:
+            self.moment = add_vectors(self.moment, element.resultant_moment(self.cg))
+        for element in self.massElements:
+            self.moment = add_vectors(self.moment, element.resultant_moment(self.cg))
+
+    def update_resultant_force(self):
+        self.force = [0, 0, 0]
+        for element in self.aeroElements:
+            self.force = add_vectors(self.force, element.resultant_force())
+        for element in self.massElements:
+            self.force = add_vectors(self.force, element.weight)
 
     
 
@@ -591,8 +654,10 @@ test.clear_model_diagram()
 test.display_airfoils()
 
 airspeed = 20
-for AoA in range(-30, 35):
+for AoA in range(-5, 5):
     #AoA = AoA / 10
     test.update_xfoil_data(airspeed)
     test.update_forces(AoA, airspeed, AoA) # temporary pitch = AoA
+    test.update_moment()
+    test.update_resultant_force()
     test.redraw_model_diagram()
