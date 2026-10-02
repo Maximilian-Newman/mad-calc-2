@@ -396,9 +396,9 @@ class AeroElement:
         fullName = airfoil_full_name(self.name, self.flapx, self.flapy, self.nearest_flap_angle())
         x, y, z = self.position
         if self.stalled:
-            parentModel.diagram_draw_airfoil(fullName, x, y, z, self.chord, self.incidence, color="orange")
+            parentModel.diagram_draw_airfoil(fullName, x, y, z, self.chord, self.incidence, "orange", self.inverted)
         else:
-            parentModel.diagram_draw_airfoil(fullName, x, y, z, self.chord, self.incidence, color="blue")
+            parentModel.diagram_draw_airfoil(fullName, x, y, z, self.chord, self.incidence, "blue", self.inverted)
 
     def display_forces(self, parentModel):
         x, y, z = self.position
@@ -542,14 +542,18 @@ class StaticModel:
         
 
 
-    def diagram_draw_airfoil(self, name, x, y, z, chord, incidence=0, color="blue"):
+    def diagram_draw_airfoil(self, name, x, y, z, chord, incidence=0, color="blue", inverted=False):
+        invFactor = 1
+        if inverted: invFactor = -1
+        
         x_data, z_data = get_selig_data(name)
         y_data = []
         for i in range(0, len(z_data)):
+            x_data[i], z_data[i] = rotate_point(x_data[i], z_data[i], -incidence * invFactor)
+            
             x_data[i] = x + chord * x_data[i]
-            z_data[i] = z + chord * z_data[i]
+            z_data[i] = z + chord * z_data[i] * invFactor
 
-            x_data[i], z_data[i] = rotate_point(x_data[i], z_data[i], -incidence)
             y_data.append(y)
 
         self.model_diagram.plot(x_data, y_data, z_data, c=color, clip_on=False)
@@ -642,7 +646,7 @@ class StaticModel:
                 return True
         return False
 
-    def solve_AoA(self, airspeed, pathAngle, acc, tolerance=0.01):
+    def solve_AoA(self, airspeed, pathAngle, acc, tolerance=0.01, fixPitch = False):
         # will fail if stalled when aircraft incidence is 0
         # but it would be a really funky design if it was stalled then but not at other angles
         # so I don't care
@@ -653,7 +657,8 @@ class StaticModel:
         
         while self.force[2] > self.mass * acc:
             a1 -= 1
-            self.update_forces(a1, airspeed, pathAngle)
+            if fixPitch: self.update_forces(a1, airspeed, pathAngle - a1)
+            else: self.update_forces(a1, airspeed, pathAngle)
             self.update_resultant_force()
             if self.is_stalled():
                 return None
@@ -663,7 +668,8 @@ class StaticModel:
         
         while self.force[2] < self.mass * acc:
             a2 += 1
-            self.update_forces(a2, airspeed, pathAngle)
+            if fixPitch: self.update_forces(a2, airspeed, pathAngle - a2)
+            else: self.update_forces(a2, airspeed, pathAngle)
             self.update_resultant_force()
             if self.is_stalled():
                 return None
@@ -671,7 +677,8 @@ class StaticModel:
         while a2 - a1 > tolerance:
             test.redraw_model_diagram()
             c = (a1 + a2) / 2
-            self.update_forces(c, airspeed, pathAngle)
+            if fixPitch: self.update_forces(c, airspeed, pathAngle - c)
+            else: self.update_forces(c, airspeed, pathAngle)
             self.update_resultant_force()
 
             if self.force == self.mass * acc:
@@ -699,13 +706,21 @@ test = StaticModel()
 
 width = 0.1
 
-test.massElements.append(MassElement(1.8, 0.2, width*10, 0))
-test.massElements.append(MassElement(1.8, 0.2, -width*10, 0))
+test.massElements.append(MassElement(1.8, -0.1, width*10, 0))
+test.massElements.append(MassElement(1.8, -0.1, -width*10, 0))
 
 for i in range(0, 15):
     #(name, chord, incidence, width, flapx, flapy, flapang, x, y, z)
     test.aeroElements.append(AeroElement("NACA4412", 0.4, 0.3*(20-i), width, 0.8, 0.5, 0, 0, (i+0.5)*width, 0))
     test.aeroElements.append(AeroElement("NACA4412", 0.4, 0.3*(20-i), width, 0.8, 0.5, 0, 0, -(i+0.5)*width, 0))
+
+for i in range(0, 6):
+    a = AeroElement("NACA4412", 0.2, -2, width, 0.8, 0.5, 0, 1, (i+0.5)*width, 0)
+    a.inverted = True
+    test.aeroElements.append(a)
+    a = AeroElement("NACA4412", 0.2, -2, width, 0.8, 0.5, 0, 1, -(i+0.5)*width, 0)
+    a.inverted = True
+    test.aeroElements.append(a)
 
 test.clear_model_diagram()
 test.display_airfoils()
@@ -717,7 +732,7 @@ airspeed = 10
 
 
 for acc in range(0, 20):
-    print("target a =", acc, "m/s^2\tAoA =", test.solve_AoA(airspeed, 0, acc), "°\ta =", round(test.force[2]/test.mass, 5), "m/s^2")
+    print("target a =", acc, "m/s^2\tAoA =", test.solve_AoA(airspeed, 0, acc, fixPitch = False), "°\ta =", round(test.force[2]/test.mass, 5), "m/s^2")
     test.redraw_model_diagram()
     if test.is_stalled():
         break
