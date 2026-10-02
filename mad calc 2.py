@@ -28,7 +28,7 @@ XFOIL_FAIL_TOLERANCE = 2
 REYNOLDS_MAX_INTERPOLATION_RATIO = 1.2
 MACH_INTERPOLATION_DISTANCE = 0.1
 
-ARROW_SIZE_MULTIPLIER = 0.02
+ARROW_SIZE_MULTIPLIER = 0.1
 
 def get_reynolds(chord, v):
     return int(chord * v / (KINEMATIC_VISCOSITY))
@@ -528,6 +528,7 @@ class StaticModel:
         self.pitch = 0
         self.roll = 0
         self.cg = [0, 0, 0]
+        self.mass = 0
         self.force = [0, 0, 0]
         
 
@@ -608,11 +609,11 @@ class StaticModel:
 
     def update_cg(self):
         cg = [0, 0, 0]
-        n = 0
+        self.mass = 0
         for element in self.massElements:
             cg = add_vectors(cg, scale_vector(element.position, element.mass))
-            n += 1
-        self.cg = scale_vector(cg, 1/n)
+            self.mass += element.mass
+        self.cg = scale_vector(cg, 1/self.mass)
 
     def update_moment(self):
         self.update_cg()
@@ -629,6 +630,62 @@ class StaticModel:
         for element in self.massElements:
             self.force = add_vectors(self.force, element.weight)
 
+    def update_everything(self, AoA, airspeed, pitch):
+        self.update_xfoil_data(airspeed)
+        self.update_forces(AoA, airspeed, pitch)
+        self.update_moment()
+        self.update_resultant_force()
+
+    def is_stalled(self):
+        for element in self.aeroElements:
+            if element.stalled:
+                return True
+        return False
+
+    def solve_AoA(self, airspeed, pitch, acc, tolerance=0.01):
+        # will fail if stalled when aircraft incidence is 0
+        # but it would be a really funky design if it was stalled then but not at other angles
+        # so I don't care
+        
+        self.update_everything(0, airspeed, pitch)
+        a1 = 0
+        a2 = 0
+        
+        while self.force[2] > self.mass * acc:
+            a1 -= 1
+            self.update_forces(a1, airspeed, pitch)
+            self.update_resultant_force()
+            if self.is_stalled():
+                return None
+            
+        self.update_forces(0, airspeed, pitch)
+        self.update_resultant_force()
+        
+        while self.force[2] < self.mass * acc:
+            a2 += 1
+            self.update_forces(a2, airspeed, pitch)
+            self.update_resultant_force()
+            if self.is_stalled():
+                return None
+
+        while a2 - a1 > tolerance:
+            test.redraw_model_diagram()
+            c = (a1 + a2) / 2
+            self.update_forces(c, airspeed, pitch)
+            self.update_resultant_force()
+
+            if self.force == self.mass * acc:
+                return c
+            elif self.force[2] > self.mass * acc:
+                a2 = c
+            else:
+                a1 = c
+
+        return (a1 + a2) / 2
+            
+
+        
+
     
 
 
@@ -642,8 +699,8 @@ test = StaticModel()
 
 width = 0.1
 
-test.massElements.append(MassElement(1, 0.2, width*10, 0))
-test.massElements.append(MassElement(1, 0.2, -width*10, 0))
+test.massElements.append(MassElement(1.8, 0.2, width*10, 0))
+test.massElements.append(MassElement(1.8, 0.2, -width*10, 0))
 
 for i in range(0, 15):
     #(name, chord, incidence, width, flapx, flapy, flapang, x, y, z)
@@ -653,11 +710,14 @@ for i in range(0, 15):
 test.clear_model_diagram()
 test.display_airfoils()
 
-airspeed = 20
-for AoA in range(-5, 5):
-    #AoA = AoA / 10
-    test.update_xfoil_data(airspeed)
-    test.update_forces(AoA, airspeed, AoA) # temporary pitch = AoA
-    test.update_moment()
-    test.update_resultant_force()
+airspeed = 10
+#for AoA in range(-5, 5):
+#    test.update_everything(AoA, airspeed, AoA) # temporary pitch = AoA
+#    test.redraw_model_diagram()
+
+
+for acc in range(0, 20):
+    print("target a =", acc, "m/s^2\tAoA =", test.solve_AoA(airspeed, 0, acc), "°\ta =", round(test.force[2]/test.mass, 5), "m/s^2")
     test.redraw_model_diagram()
+    if test.is_stalled():
+        break
